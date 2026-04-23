@@ -1,4 +1,3 @@
 name = "my-bot"
 compatibility_date = "2026-01-01"
-
-[vars]
+main = "src/index.ts"
