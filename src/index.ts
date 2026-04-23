@@ -1,33 +1,42 @@
 export default {
   async fetch(request: Request, env: any): Promise<Response> {
 
-    // 🔒 защита от браузера (GET-запросы)
+    // 🧪 логируем ВСЁ, что приходит
+    console.log("🔥 REQUEST:", request.method);
+
+    // 🌐 если открыли в браузере
     if (request.method !== "POST") {
       return new Response("bot is running");
     }
 
     let update: any;
 
-    // 📩 пытаемся прочитать JSON от Telegram
     try {
-      update = await request.json();
+      const raw = await request.text();
+      console.log("📦 RAW UPDATE:", raw);
+
+      update = JSON.parse(raw);
     } catch (e) {
+      console.log("❌ BAD JSON");
       return new Response("bad request");
     }
 
-    // 🧠 проверяем, что это сообщение
-    if (!update.message || !update.message.text) {
+    // 🧠 проверка структуры Telegram
+    if (!update?.message?.chat?.id) {
+      console.log("❌ NO MESSAGE");
       return new Response("no message");
     }
 
     const chatId = update.message.chat.id;
-    const text = update.message.text;
+    const text = update.message.text || "";
+
+    console.log("💬 MESSAGE:", text);
 
     // 🧩 логика бота
     let reply = "🤖 не понял команду";
 
     if (text === "/start") {
-      reply = "🛒 бот магазина запущен";
+      reply = "🛒 бот магазина работает";
     }
 
     if (text === "/catalog") {
@@ -35,20 +44,26 @@ export default {
     }
 
     if (text === "/help") {
-      reply = "команды: /start /catalog";
+      reply = "команды: /start /catalog /help";
     }
 
-    // 📤 отправка ответа в Telegram
-    await fetch(`https://api.telegram.org/bot${env.BOT_TOKEN}/sendMessage`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json"
-      },
-      body: JSON.stringify({
-        chat_id: chatId,
-        text: reply
-      })
-    });
+    try {
+      await fetch(`https://api.telegram.org/bot${env.BOT_TOKEN}/sendMessage`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          chat_id: chatId,
+          text: reply
+        })
+      });
+
+      console.log("✅ SENT MESSAGE");
+
+    } catch (e) {
+      console.log("❌ SEND ERROR", e);
+    }
 
     return new Response("ok");
   }
