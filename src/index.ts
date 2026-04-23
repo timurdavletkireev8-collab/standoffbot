@@ -1,7 +1,7 @@
 const BOT_TOKEN = "8691254747:AAHTjhxn3LhMQsg54dkkX2aMTQw2gfPr6Ug";
 
 export default {
-  async fetch(request: Request, env: any): Promise<Response> {
+  async fetch(request: Request): Promise<Response> {
 
     if (request.method !== "POST") {
       return new Response("WORKER HIT");
@@ -15,115 +15,59 @@ export default {
       return new Response("bad json");
     }
 
-    const msg = update.message || update.callback_query?.message;
-    const chatId = msg?.chat?.id;
+    const msg = update.message;
+    if (!msg?.chat?.id) return new Response("no message");
 
-    if (!chatId) return new Response("no chat");
+    const chatId = msg.chat.id;
+    const text = msg.text || "";
 
-    const text = update.message?.text;
-    const callback = update.callback_query;
-
-    // 🛒 база товаров
-    let products = await env.DB.get("products");
-
-    if (!products) {
-      products = JSON.stringify([
-        { id: 1, name: "🎮 Скин A", price: 150 },
-        { id: 2, name: "⚔️ Скин B", price: 250 },
-        { id: 3, name: "💎 Бонус", price: 500 }
-      ]);
-
-      await env.DB.put("products", products);
-    }
-
-    const items = JSON.parse(products);
-
-    // =========================
-    // 📌 /start
-    // =========================
+    // 📌 /start с фото
     if (text === "/start") {
-      await sendMessage(chatId,
-        "👋 Добро пожаловать в магазин!\nВыбери действие:",
-        mainMenu()
-      );
+
+      await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendPhoto`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          chat_id: chatId,
+
+          // 🖼️ замени на свою картинку
+          photo: "https://ibb.co/tPncNfsM",
+
+          caption:
+            "👋 Добро пожаловать в магазин!\n" +
+            "💎 Здесь ты можешь купить товары\n\n" +
+            "👇 выбери действие",
+
+          reply_markup: {
+            inline_keyboard: [
+              [
+                { text: "📦 Каталог", callback_data: "catalog" }
+              ]
+            ]
+          }
+        })
+      });
+
       return new Response("ok");
     }
 
-    // =========================
-    // 📦 каталог
-    // =========================
-    if (text === "/catalog") {
-      await sendMessage(chatId,
-        "📦 Каталог товаров:",
-        catalogMenu(items)
-      );
-      return new Response("ok");
-    }
+    // 📦 простой ответ на каталог (чтобы кнопка не молчала)
+    if (update.callback_query?.data === "catalog") {
 
-    // =========================
-    // 🖱 нажатие кнопки
-    // =========================
-    if (callback) {
-      const data = callback.data;
-
-      if (data.startsWith("buy_")) {
-        const id = Number(data.split("_")[1]);
-        const item = items.find((p: any) => p.id === id);
-
-        if (!item) return new Response("ok");
-
-        await env.DB.put(`order_${chatId}`, JSON.stringify(item));
-
-        await sendMessage(chatId,
-          `✅ Ты купил: ${item.name}\n💰 Цена: ${item.price}₽`,
-          mainMenu()
-        );
-
-        return new Response("ok");
-      }
-
-      if (data === "catalog") {
-        await sendMessage(chatId, "📦 Каталог:", catalogMenu(items));
-      }
-    }
-
-    return new Response("ok");
-
-    // =========================
-    // 📤 функция отправки
-    // =========================
-    async function sendMessage(chatId: number, text: string, replyMarkup?: any) {
       await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           chat_id: chatId,
-          text,
-          reply_markup: replyMarkup
+          text: "📦 Каталог пока в разработке"
         })
       });
+
+      return new Response("ok");
     }
 
-    // =========================
-    // 🧠 меню
-    // =========================
-    function mainMenu() {
-      return {
-        inline_keyboard: [
-          [{ text: "📦 Каталог", callback_data: "catalog" }]
-        ]
-      };
-    }
-
-    function catalogMenu(items: any[]) {
-      return {
-        inline_keyboard: [
-          ...items.map(p => ([
-            { text: `${p.name} - ${p.price}₽`, callback_data: `buy_${p.id}` }
-          ])),
-          [{ text: "🏠 Назад", callback_data: "catalog" }]
-        ]
-      };
-    }
+    return new Response("ok");
   }
 };
