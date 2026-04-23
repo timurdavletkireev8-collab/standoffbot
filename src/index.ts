@@ -1,25 +1,24 @@
 export default {
   async fetch(request: Request, env: any): Promise<Response> {
 
-    if (request.method !== "POST") {
-      return new Response("ok");
-    }
+    const text = await request.text();
 
-    let update;
+    console.log("RAW UPDATE:", text);
+
     try {
-      update = await request.json();
-    } catch (e) {
-      return new Response("bad request");
-    }
+      const update = JSON.parse(text);
 
-    if (update?.message) {
+      if (!update.message) {
+        return new Response("no message");
+      }
+
       const chatId = update.message.chat.id;
-      const text = update.message.text;
+      const msg = update.message.text;
 
-      let reply = "не понял команду";
+      let reply = "бот жив";
 
-      if (text === "/start") reply = "🛒 бот магазина работает";
-      if (text === "/catalog") reply = "1. Товар A\n2. Товар B";
+      if (msg === "/start") reply = "🛒 старт";
+      if (msg === "/catalog") reply = "📦 каталог";
 
       await fetch(`https://api.telegram.org/bot${env.BOT_TOKEN}/sendMessage`, {
         method: "POST",
@@ -29,8 +28,11 @@ export default {
           text: reply
         })
       });
-    }
 
-    return new Response("ok");
+      return new Response("ok");
+
+    } catch (e) {
+      return new Response("bad json");
+    }
   }
 };
