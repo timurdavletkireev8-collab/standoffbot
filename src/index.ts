@@ -1,8 +1,18 @@
 export default {
   async fetch(request: Request, env: any): Promise<Response> {
-    const update = await request.json();
 
-    if (update.message) {
+    if (request.method !== "POST") {
+      return new Response("ok");
+    }
+
+    let update;
+    try {
+      update = await request.json();
+    } catch (e) {
+      return new Response("bad request");
+    }
+
+    if (update?.message) {
       const chatId = update.message.chat.id;
       const text = update.message.text;
 
