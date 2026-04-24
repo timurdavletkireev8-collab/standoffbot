@@ -1,123 +1,205 @@
 const BOT_TOKEN = "8691254747:AAHTjhxn3LhMQsg54dkkX2aMTQw2gfPr6Ug";
-const BOT_USERNAME = "ВСТАВЬ_USERNAME"; // без @
+const BOT_USERNAME = "ВСТАВЬ_USERNAME";
+const ADMINS = [7020322752]; // твой ID
 
 export default {
-  async fetch(request: Request, env: any): Promise<Response> {
+  async fetch(req: Request, env: any): Promise<Response> {
 
-    if (request.method !== "POST") {
-      return new Response("OK");
-    }
+    if (req.method !== "POST") return new Response("OK");
 
-    let update;
+    let update: any;
+    try { update = await req.json(); } catch { return new Response("bad json"); }
 
-    try {
-      update = await request.json();
-    } catch {
-      return new Response("bad json");
-    }
+    const msg = update.message;
+    const cb = update.callback_query;
 
-    const msg = update.message || update.callback_query?.message;
-    if (!msg) return new Response("no message");
+    const chatId = msg?.chat?.id || cb?.message?.chat?.id;
+    const userId = msg?.from?.id || cb?.from?.id;
 
-    const userId = msg.from.id;
-    const chatId = msg.chat.id;
-    const text = update.message?.text || "";
-    const callback = update.callback_query;
+    if (!chatId || !userId) return new Response("no data");
+
+    const text = msg?.text || "";
+    const data = cb?.data;
 
     // =========================
-    // /start
+    // 🚫 BAN CHECK
+    // =========================
+    const banned = await env.DB.get(`ban_${userId}`);
+    if (banned) return new Response("banned");
+
+    // =========================
+    // 🧠 ADMIN CHECK
+    // =========================
+    const isAdmin = ADMINS.includes(userId);
+
+    // =========================
+    // 👤 /start + уровни рефералов
     // =========================
     if (text.startsWith("/start")) {
 
       const refId = text.split(" ")[1];
 
-      let user = await env.DB.get(`u_${userId}`);
+      let user = await getUser(env, userId);
 
       if (!user) {
-        await env.DB.put(`u_${userId}`, JSON.stringify({
+        user = {
+          balance: 0,
           invited: 0,
-          balance: 0
-        }));
+          level: 1,
+          refBy: refId || null,
+          reg: Date.now(),
+          lastClick: 0
+        };
 
+        await env.DB.put(`u_${userId}`, JSON.stringify(user));
+
+        // рефералка + анти-самонакрутка
         if (refId && refId !== String(userId)) {
-          let refUser = await env.DB.get(`u_${refId}`);
-          if (refUser) {
-            let data = JSON.parse(refUser);
-            data.invited += 1;
-            data.balance += 10;
-            await env.DB.put(`u_${refId}`, JSON.stringify(data));
+          let ref = await getUser(env, Number(refId));
+
+          if (ref) {
+            ref.invited += 1;
+            ref.balance += getReward(ref.invited);
+            await env.DB.put(`u_${refId}`, JSON.stringify(ref));
           }
         }
       }
 
-      const data = await getUser(userId);
-      const link = `https://t.me/${BOT_USERNAME}?start=${userId}`;
+      return send(chatId,
+`👋 Добро пожаловать
 
-      await send(chatId,
-`👋 Добро пожаловать!
-
-💰 Баланс: ${data.balance}₽
-👥 Рефералы: ${data.invited}
-
-🔥 Приглашай друзей и получай награду!
-
-🔗 Твоя ссылка:
-${link}`, mainMenu());
-
-      return new Response("ok");
+💰 Баланс: ${user.balance}
+👥 Рефералы: ${user.invited}
+⭐ Уровень: ${user.level}`, menu(isAdmin));
     }
 
     // =========================
-    // КНОПКИ
+    // 📊 ПРОФИЛЬ
     // =========================
-    if (callback) {
+    if (text === "/profile") {
+      const u = await getUser(env, userId);
 
-      await answer(callback.id);
-      const data = callback.data;
+      return send(chatId,
+`👤 ПРОФИЛЬ
+
+💰 Баланс: ${u.balance}
+👥 Рефералы: ${u.invited}
+⭐ Уровень: ${u.level}`);
+    }
+
+    // =========================
+    // 🚫 BAN SYSTEM (admin)
+    // =========================
+    if (isAdmin && text.startsWith("/ban")) {
+      const id = text.split(" ")[1];
+      await env.DB.put(`ban_${id}`, "1");
+      return send(chatId, `🚫 User ${id} banned`);
+    }
+
+    if (isAdmin && text.startsWith("/unban")) {
+      const id = text.split(" ")[1];
+      await env.DB.delete(`ban_${id}`);
+      return send(chatId, `✅ User ${id} unbanned`);
+    }
+
+    // =========================
+    // 💸 PAYOUT REQUEST
+    // =========================
+    if (text === "/withdraw") {
+      const u = await getUser(env, userId);
+
+      if (u.balance < 100) {
+        return send(chatId, "❌ Минимум 100₽");
+      }
+
+      await env.DB.put(`payout_${userId}`, JSON.stringify({
+        userId,
+        amount: u.balance,
+        status: "pending"
+      }));
+
+      return send(chatId, "💸 Заявка отправлена");
+    }
+
+    // =========================
+    // 📊 TOP LEVELS (admin)
+    // =========================
+    if (isAdmin && text === "/stats") {
+      const top = await getTop(env);
+
+      return send(chatId, top);
+    }
+
+    // =========================
+    // CALLBACK
+    // =========================
+    if (cb) {
+      await answer(cb.id);
 
       if (data === "profile") {
-        const user = await getUser(userId);
+        const u = await getUser(env, userId);
 
-        await send(chatId,
-`👤 Твой профиль
+        return send(chatId,
+`👤 Профиль
 
-💰 Баланс: ${user.balance}₽
-👥 Приглашено: ${user.invited}`, backMenu());
+💰 ${u.balance}
+👥 ${u.invited}
+⭐ ${u.level}`, menu(isAdmin));
       }
 
-      if (data === "ref") {
-        const link = `https://t.me/${BOT_USERNAME}?start=${userId}`;
-
-        await send(chatId,
-`🔗 Твоя реферальная ссылка:
-
-${link}
-
-📢 Отправь её друзьям и получай +10₽ за каждого`, backMenu());
+      if (data === "withdraw") {
+        return send(chatId, "💸 /withdraw для вывода");
       }
-
-      if (data === "back") {
-        const user = await getUser(userId);
-
-        await send(chatId,
-`🏠 Главное меню
-
-💰 Баланс: ${user.balance}₽
-👥 Рефералы: ${user.invited}`, mainMenu());
-      }
-
-      return new Response("ok");
     }
 
     return new Response("ok");
 
     // =========================
-    // функции
+    // FUNCTIONS
     // =========================
-    async function getUser(id: number) {
-      const user = await env.DB.get(`u_${id}`);
-      if (!user) return { invited: 0, balance: 0 };
-      return JSON.parse(user);
+
+    async function getUser(env: any, id: number) {
+      const u = await env.DB.get(`u_${id}`);
+      return u ? JSON.parse(u) : null;
+    }
+
+    function getReward(invited: number) {
+      // уровни рефералов
+      if (invited > 50) return 25;
+      if (invited > 20) return 15;
+      if (invited > 5) return 10;
+      return 5;
+    }
+
+    async function getTop(env: any) {
+      const list = await env.DB.list({ prefix: "u_" });
+
+      let arr = [];
+
+      for (let k of list.keys) {
+        const u = await env.DB.get(k.name);
+        if (!u) continue;
+        arr.push(JSON.parse(u));
+      }
+
+      arr.sort((a, b) => b.invited - a.invited);
+
+      return arr.slice(0, 5)
+        .map((u, i) => `${i + 1}. 👤 ${u.invited} реф | ⭐ ${u.level}`)
+        .join("\n");
+    }
+
+    function menu(admin: boolean) {
+      const base = [
+        [{ text: "👤 Профиль", callback_data: "profile" }],
+        [{ text: "💸 Вывод", callback_data: "withdraw" }]
+      ];
+
+      if (admin) {
+        base.push([{ text: "🛠 Admin Panel", callback_data: "admin" }]);
+      }
+
+      return { inline_keyboard: base };
     }
 
     async function send(chatId: number, text: string, kb?: any) {
@@ -130,33 +212,16 @@ ${link}
           reply_markup: kb
         })
       });
+
+      return new Response("ok");
     }
 
     async function answer(id: string) {
       await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/answerCallbackQuery`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          callback_query_id: id
-        })
+        body: JSON.stringify({ callback_query_id: id })
       });
-    }
-
-    function mainMenu() {
-      return {
-        inline_keyboard: [
-          [{ text: "👤 Профиль", callback_data: "profile" }],
-          [{ text: "🔗 Моя ссылка", callback_data: "ref" }]
-        ]
-      };
-    }
-
-    function backMenu() {
-      return {
-        inline_keyboard: [
-          [{ text: "⬅️ Назад", callback_data: "back" }]
-        ]
-      };
     }
   }
 };
